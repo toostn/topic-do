@@ -1,0 +1,17 @@
+{
+  "name": "topic-do",
+  "module": "src/index.js",
+  "type": "module",
+  "dependencies": {
+    "mqtt": "^5.1.4"
+  },
+  "description": "High code automation system for mqtt",
+  "version": "0.1.0",
+  "main": "src/index.js",
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Torsten Freyhall",
+  "license": "MIT"
+}
