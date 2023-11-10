@@ -1,6 +1,20 @@
 import * as mqtt from "mqtt";
 import { matchTopic } from './util.js';
 
+class Cache {
+  constructor() {
+    this._items = {};
+  }
+
+  set(key, value) {
+    this._items[key] = value;
+  }
+
+  get(key) {
+    return this._items[key];
+  }
+}
+
 class Broker {
   constructor(url, mqttOptions, options = {parseJson: true}) {
     this.client = mqtt.connect(
@@ -10,7 +24,7 @@ class Broker {
     this.client.on('connect', () => {  this._onConnected() });
     this.client.on('message', (t, m) => { this._onMessage(t, m) });
 
-    this.cache = {};
+    this.cache = new Cache();
 
     this._options = options;
     this._tickTimeout = null;
@@ -75,7 +89,7 @@ class Broker {
 
     const parsedMessage = this._parseMessageIfNeeded(message);
 
-    this.cache[topic] = parsedMessage;
+    this.cache.set(topic) = parsedMessage;
 
     for (let t in this._callbacks) {
       if (matchTopic(t, topic)) {
@@ -102,7 +116,7 @@ class Broker {
       if (timeout < 0) continue;
 
       setTimeout(() => {
-        callback(this.client);
+        callback(this.client, this.cache);
         this.scheduleDo(timeoutFunc, callback);
       }, timeout);
     }
