@@ -36,7 +36,7 @@ broker(
 )
     .topicDo(
         'home/zigbee2mqtt/temperature_sensor', // Listen to this topic
-        (topic, message, client, cache) => {   // Do this on incoming messages
+        (topic, message, cache, client) => {   // Do this on incoming messages
             // Indicate indoor temperature using lights
 
             const light = 'home/zigbee2mqtt/color_light';
@@ -47,7 +47,13 @@ broker(
 
             const hex = (message.temperature < 20) ? '#0000ff' : '#ff0000';
 
-            client.publish(light, JSON.stringify({color: { hex }}));
+            // To post responses back to the broker, simply return a single or
+            // an array of [topic, message]
+
+            return [
+                light,
+                {color: { hex }}
+            ];
         }
     )
     .topicDo(
@@ -55,7 +61,7 @@ broker(
             'home/zigbee2mqtt/facade_motion_sensor',
             'home/zigbee2mqtt/garden_motion_sensor'
         ],
-        (topic, message, client, cache) => {
+        (topic, message, cache, client) => {
             // Log outdoor motion to database
             const sensor = topic.split('/').pop().replace('_motion_sensor', '');
 
@@ -69,22 +75,23 @@ broker(
     )
     .scheduleDo( // It can also haz an timeout generator function
         () => { return 30000; },  // Every 30 seconds (sort of...)
-        (client, cache) => { // Obviously timeouts have no topic or message
-            client.publish(
+        (cache, client) => { // Obviously timeouts have no topic or message
+            return [
                 'home/zigbee2mqtt/color_temp_controlled', // Zigbee group
-                JSON.stringify({
-                    color_temp: magicColorTempFunction()
-                })
-            );
+                {color_temp: magicColorTempFunction()}
+            ];
         }
     )
     .scheduleDo(
         scheduleOnce(),
-        (client, cache) => {
+        (cache, client) => {
             // In case you want to run something once when we're connected to the
             // broker
 
-            client.publish('topic-do/message', 'Hello broker!');
+            return [
+                'topic-do/message',
+                'Hello broker!'
+            ];
         }
     )
     // If you don't like putting it all in one file:

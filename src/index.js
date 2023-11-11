@@ -1,4 +1,4 @@
-import * as mqtt from "mqtt";
+import * as mqtt from 'mqtt';
 import { matchTopic } from './util.js';
 
 class Cache {
@@ -80,8 +80,9 @@ class Broker {
       this.client.subscribe('#');
     } else {
       this._processPendingSubscriptions();
-      this._processScheduling();
     }
+
+    this._processScheduling();
   }
 
   _onMessage(topic, message) {
@@ -89,13 +90,21 @@ class Broker {
 
     const parsedMessage = this._parseMessageIfNeeded(message);
 
-    this.cache.set(topic) = parsedMessage;
+    this.cache.set(topic, parsedMessage);
 
     for (let t in this._callbacks) {
-      if (matchTopic(t, topic)) {
-        for (let callback of this._callbacks[t]) {
-          callback(topic, parsedMessage, this.client, this.cache);
-        }
+      if (matchTopic(t, topic) === false) {
+        continue;
+      }
+
+      for (let callback of this._callbacks[t]) {
+        this._processCallbackAndPublish(
+          callback,
+          topic,
+          parsedMessage,
+          this.cache,
+          this.client
+        );
       }
     }
   }
@@ -116,7 +125,7 @@ class Broker {
       if (timeout < 0) continue;
 
       setTimeout(() => {
-        callback(this.client, this.cache);
+        this._processCallbackAndPublish(callback, this.cache, this.client);
         this.scheduleDo(timeoutFunc, callback);
       }, timeout);
     }
@@ -133,6 +142,26 @@ class Broker {
       return message;
     }
   }
+
+  _processCallbackAndPublish(callback, ...args) {
+    let messages = callback(...args);
+
+    if (Array.isArray(messages)) {
+      if (Array.isArray(messages[0]) === false) {
+        messages = [messages];
+      }
+
+      for (let message of messages) {
+        this.client.publish(
+          message[0],
+          (typeof message[1] === "object")
+          ? JSON.stringify(message[1])
+          : message[1]
+        );
+      }
+    }
+  }
+
 
   _log() {
     if (this._options.debug === true) {
