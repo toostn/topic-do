@@ -144,24 +144,23 @@ class Broker {
   }
 
   _processCallbackAndPublish(callback, ...args) {
-    let messages = callback(...args);
+    return Promise.resolve(callback(...args)).then((messages) => {
+      if (Array.isArray(messages)) {
+        if (Array.isArray(messages[0]) === false) {
+          messages = [messages];
+        }
 
-    if (Array.isArray(messages)) {
-      if (Array.isArray(messages[0]) === false) {
-        messages = [messages];
+        for (let message of messages) {
+          this.client.publish(
+            message[0],
+            (typeof message[1] === "object")
+            ? JSON.stringify(message[1])
+            : message[1]
+          );
+        }
       }
-
-      for (let message of messages) {
-        this.client.publish(
-          message[0],
-          (typeof message[1] === "object")
-          ? JSON.stringify(message[1])
-          : message[1]
-        );
-      }
-    }
+    });
   }
-
 
   _log() {
     if (this._options.debug === true) {

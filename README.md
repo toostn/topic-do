@@ -66,11 +66,20 @@ broker(
             const sensor = topic.split('/').pop().replace('_motion_sensor', '');
 
             // Made up DBs are always connected and never fail
-            madeUpDB.save(
-                'motion_log',
-                { sensor },
-                {motion: message.occupancy}
-            );
+            // Return a promise that resolves into an array of topic, message
+            // or an array of the same
+            return madeUpDB
+                .save(
+                    'motion_log',
+                    { sensor },
+                    {motion: message.occupancy}
+                )
+                .then(() => {
+                    return [
+                        'topic-do/messages',
+                        {aync_supported: true}
+                    ];
+                });
         }
     )
     .scheduleDo( // It can also haz an timeout generator function
