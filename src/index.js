@@ -1,174 +1,138 @@
 import * as mqtt from 'mqtt';
-import { matchTopic } from './util.js';
+import { matchTopic, cache } from './util.js';
 
-class Cache {
-  constructor() {
-    this._items = {};
-  }
+export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
+  let _pendingSubscriptions = (_options.cacheAll === true) ? ['#'] : [];
+  let _pendingScheduling = [];
+  let _callbacks = {};
 
-  set(key, value) {
-    this._items[key] = value;
-  }
+  const _cache = cache();
+  const _client = mqtt.connect(url, {manualConnect: true, ...mqttOptions});
 
-  get(key) {
-    return this._items[key];
-  }
-}
+  _client.on('connect', () => {
+    _log('Connected to broker');
+    _tick();
+  });
 
-class Broker {
-  constructor(url, mqttOptions, options = {parseJson: true}) {
-    this.client = mqtt.connect(
-      url,
-      {manualConnect: true, ...mqttOptions}
-    );
-    this.client.on('connect', () => {  this._onConnected() });
-    this.client.on('message', (t, m) => { this._onMessage(t, m) });
+  _client.on('message', (topic, message) => {
+    _log(`Got topic: ${topic} with message: ${message}`);
 
-    this.cache = new Cache();
+    const parsedMessage = _parseMessageIfNeeded(message);
 
-    this._options = options;
-    this._tickTimeout = null;
-    this._pendingSubscriptions = [];
-    this._pendingScheduling = [];
-    this._callbacks = {};
-  }
+    _cache.set(topic, parsedMessage);
 
-  topicDo(topics, callback) {
-    if (Array.isArray(topics) === false) {
-      topics = [topics];
-    }
-
-    for (let topic of topics) {
-      if (Array.isArray(this._callbacks[topic])) {
-        this._callbacks[topic].push(callback);
-      } else {
-        this._callbacks[topic] = [callback];
-        this._pendingSubscriptions.push(topic);
-      }
-    }
-
-    this._tick();
-
-    return this;
-  }
-
-  scheduleDo(timeoutFunc, callback) {
-    this._pendingScheduling.push([timeoutFunc, callback]);
-
-    this._tick();
-
-    return this;
-  }
-
-  _tick() {
-    this._tickTimeout = this._tickTimeout || setTimeout(() => {
-      if (this.client.connected === false) {
-        this.client.connect();
-      } else {
-        this._processPendingSubscriptions();
-        this._processScheduling();
-      }
-
-      this._tickTimeout = null;
-    });
-  }
-
-  _onConnected() {
-    this._log(`Connected to broker`);
-
-    if (this._options.cacheAll === true) {
-      this.client.subscribe('#');
-    } else {
-      this._processPendingSubscriptions();
-    }
-
-    this._processScheduling();
-  }
-
-  _onMessage(topic, message) {
-    this._log(`Got topic: ${topic} with message: ${message}`);
-
-    const parsedMessage = this._parseMessageIfNeeded(message);
-
-    this.cache.set(topic, parsedMessage);
-
-    for (let t in this._callbacks) {
+    for (let t in _callbacks) {
       if (matchTopic(t, topic) === false) {
         continue;
       }
 
-      for (let callback of this._callbacks[t]) {
-        this._processCallbackAndPublish(
-          callback,
-          topic,
-          parsedMessage,
-          this.cache,
-          this.client
-        );
+      for (let callback of _callbacks[t]) {
+        _callbackAndPublish(callback, topic, parsedMessage, _cache, publish);
       }
     }
-  }
+  });
 
-  _processPendingSubscriptions() {
-    for (let t of this._pendingSubscriptions) {
-      this._log(`Subscribing to topic ${t}`);
-      this.client.subscribe(t);
-    }
+  let _tickTimeout = null;
 
-    this._pendingSubscriptions = [];
-  }
+  const _tick = () => {
+    _tickTimeout = _tickTimeout || setTimeout(() => {
+      if (_client.connected === false) {
+        _client.connect();
+      } else {
+        for (let t of _pendingSubscriptions) {
+          _log(`Subscribing to topic ${t}`);
+          _client.subscribe(t);
+        }
 
-  _processScheduling() {
-    for (let [timeoutFunc, callback] of this._pendingScheduling) {
-      const timeout = timeoutFunc();
+        _pendingSubscriptions = [];
 
-      if (timeout < 0) continue;
+        for (let [timeoutFunc, callback] of _pendingScheduling) {
+          const timeout = timeoutFunc();
 
-      setTimeout(() => {
-        this._processCallbackAndPublish(callback, this.cache, this.client);
-        this.scheduleDo(timeoutFunc, callback);
-      }, timeout);
-    }
+          if (timeout < 0) continue;
 
-    this._pendingScheduling = [];
-  }
+          setTimeout(() => {
+            _callbackAndPublish(callback, _cache, publish);
+            _pendingScheduling.push([timeoutFunc, callback]);
+            _tick();
+          }, timeout);
+        }
 
-  _parseMessageIfNeeded(message) {
+        _pendingScheduling = [];
+      }
+
+      _tickTimeout = null;
+    });
+  };
+
+  const _parseMessageIfNeeded = (message) => {
     try {
-      return (this._options.parseJson === true)
+      return (_options.parseJson === true)
         ? JSON.parse(message)
         : message;
     } catch (e) {
       return message;
     }
-  }
+  };
 
-  _processCallbackAndPublish(callback, ...args) {
-    return Promise.resolve(callback(...args)).then((messages) => {
-      if (Array.isArray(messages)) {
-        if (Array.isArray(messages[0]) === false) {
-          messages = [messages];
-        }
+  const _callbackAndPublish = (callback, ...args) => {
+    return Promise
+      .resolve(callback(...args))
+      .then((messages) => {
+        publish(messages);
+      });
+  };
 
-        for (let message of messages) {
-          this.client.publish(
-            message[0],
-            (typeof message[1] === "object")
-            ? JSON.stringify(message[1])
-            : message[1]
-          );
+  const publish = (messages) => {
+    if (Array.isArray(messages) === false || messages.length === 0) {
+      return;
+    }
+
+    if (Array.isArray(messages[0]) === false) {
+      messages = [messages];
+    }
+
+    for (let [topic, message] of messages) {
+      const stringMessage =  (typeof message === "object")
+        ? JSON.stringify(message)
+        : message;
+
+      _log(`Publishing message: ${stringMessage} to topic: ${topic}`);
+
+      _client.publish(topic, stringMessage);
+    }
+  };
+
+  const _log = (...messages) => {
+    if (_options.debug === true) {
+      console.debug('DEBUG: ', ...messages);
+    }
+  };
+
+  return {
+    topicDo: function (topics, callback) {
+      if (Array.isArray(topics) === false) {
+        topics = [topics];
+      }
+
+      for (let topic of topics) {
+        if (Array.isArray(_callbacks[topic])) {
+          _callbacks[topic].push(callback);
+        } else {
+          _callbacks[topic] = [callback];
+          _pendingSubscriptions.push(topic);
         }
       }
-    });
-  }
 
-  _log() {
-    if (this._options.debug === true) {
-      console.debug('DEBUG: ', ...arguments);
+      _tick();
+
+      return this;
+    },
+
+    scheduleDo: function (timeoutFunc, callback) {
+      _pendingScheduling.push([timeoutFunc, callback]);
+      _tick();
+      return this;
     }
   }
-}
-
-export const broker = (url, mqttOptions, options) => {
-  return new Broker(url, mqttOptions, options);
-}
+};
