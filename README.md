@@ -28,9 +28,8 @@ broker(
     {
         // These are options for topic-do
         debug: false,   // Logs misc useful stuff to the console
-        cacheAll: true, // Whether to keep a local cache of *all* topics on
-                        // broker, or only those subscribed to. Could be
-                        // painful to use if there are loooots of topics
+        cacheTopics: [], // Topics that are subsribed to on connection and that
+                        // are available in the cache
         parseJson: true // Attempt to parse all messages as JSON objects
     }
 )

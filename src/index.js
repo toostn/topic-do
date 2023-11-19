@@ -2,7 +2,7 @@ import * as mqtt from 'mqtt';
 import { matchTopic, cache } from './util.js';
 
 export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
-  let _pendingSubscriptions = (_options.cacheAll === true) ? ['#'] : [];
+  let _pendingSubscriptions = _options.cacheTopics || [];
   let _pendingScheduling = [];
   let _callbacks = {};
 
