@@ -39,7 +39,7 @@ export const triggerTimer = (filter, topics, messageOn, messageOff, delay) => {
   let timer = singleTimer(delay);
 
   return (topic, message, cache, publish) => {
-    if (filter == null || filter(topic, message) === true) {
+    if (filter == null || filter(topic, message, cache) === true) {
       if (messageOff != null) {
         timer(() => {
           publish(topics.map(t=> [t, messageOff]));
