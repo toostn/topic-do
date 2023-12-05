@@ -133,6 +133,18 @@ export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
       _pendingScheduling.push([timeoutFunc, callback]);
       _tick();
       return this;
+    },
+
+    use: function (config) {
+      if (Array.isArray(config?.topicDo)) {
+        config.topicDo.forEach(([t, c]) => this.topicDo(t, c));
+      }
+
+      if (Array.isArray(config?.scheduleDo)) {
+        config.scheduleDo.forEach(([t, c]) => this.scheduleDo(t, c));
+      }
+
+      return this;
     }
   }
 };

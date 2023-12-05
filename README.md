@@ -104,7 +104,45 @@ broker(
     )
     // If you don't like putting it all in one file:
     .topicDo(...remoteControl())
-    .topicDo(...nuclearLaunchButton());
+    .topicDo(...nuclearLaunchButton())
+    // Or to add puzzle pieces that both use schedules and listen to events:
+    .use((configThing) => {
+       // Do things, setup and stuff
+       // You'd typically put this function in a separate file and import it
+
+       return {
+           topicDo: [
+               [
+                   'home/sensors/my-switch',
+                   (topic, {action}) => {
+                       return (action === 'arrow_up')
+                         ? ['home/lights/living-room/set', {state: 'ON'}]
+                         : [];
+                   }
+                ],
+                [
+                   'home/sensors/my-other-switch',
+                   (topic, {action}) => {
+                       return (action === 'arrow_up')
+                         ? ['home/lights/bedroom/set', {state: 'ON'}]
+                         : [];
+                   }
+                ]
+           ],
+
+           scheduleDo: [
+                [
+                    () => 30000,
+                    () => {
+                        return [
+                            'topic-do/ping',
+                            {alive: true}
+                        ];
+                    }
+                ]
+            ]
+       };
+    });
 ```
 
 ## This solution is better than...
