@@ -6,7 +6,7 @@ export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
   let _pendingScheduling = [];
   let _callbacks = {};
 
-  const _cache = cache();
+  const _cache = _options.cache || cache();
   const _client = mqtt.connect(url, {manualConnect: true, ...mqttOptions});
 
   _client.on('connect', () => {
