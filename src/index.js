@@ -103,14 +103,9 @@ export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
     }
   };
 
-  const formatter = new Intl.DateTimeFormat('sv', {
-    dateStyle: 'short',
-    timeStyle: 'medium'
-  });
-
   const _log = (...messages) => {
     if (_options.debug === true) {
-      console.debug(`${formatter.format(Date.now())} DEBUG:`, ...messages);
+      console.debug(...messages);
     }
   };
 
