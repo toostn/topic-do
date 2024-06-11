@@ -110,39 +110,33 @@ export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
   };
 
   return {
-    topicDo: function (topics, callback) {
-      if (Array.isArray(topics) === false) {
-        topics = [topics];
+    add: function (rule) {
+      if (Array.isArray(rule) === true) {
+        for (let r of rule) {
+          this.add(r);
+        }
+
+        return this;
       }
 
-      for (let topic of topics) {
-        if (Array.isArray(_callbacks[topic])) {
-          _callbacks[topic].push(callback);
-        } else {
-          _callbacks[topic] = [callback];
-          _pendingSubscriptions.push(topic);
+      if ('topic' in rule && 'do' in rule) {
+        const topics = Array.isArray(rule.topic) ? rule.topic : [rule.topic];
+
+        for (let topic of topics) {
+          if (Array.isArray(_callbacks[topic])) {
+            _callbacks[topic].push(rule.do);
+          } else {
+            _callbacks[topic] = [rule.do];
+            _pendingSubscriptions.push(topic);
+          }
         }
       }
 
-      _tick();
-
-      return this;
-    },
-
-    scheduleDo: function (timeoutFunc, callback) {
-      _pendingScheduling.push([timeoutFunc, callback]);
-      _tick();
-      return this;
-    },
-
-    use: function (config) {
-      if (Array.isArray(config?.topicDo)) {
-        config.topicDo.forEach(([t, c]) => this.topicDo(t, c));
+      if ('schedule' in rule && 'do' in rule) {
+        _pendingScheduling.push([rule.schedule, rule.do]);
       }
 
-      if (Array.isArray(config?.scheduleDo)) {
-        config.scheduleDo.forEach(([t, c]) => this.scheduleDo(t, c));
-      }
+      _tick();
 
       return this;
     }
