@@ -100,7 +100,7 @@ broker(
       // or an array of the same
       return madeUpDB
         .save(
-        'motion_log',
+          'motion_log',
           { sensor },
           {motion: message.occupancy}
         )
@@ -113,7 +113,11 @@ broker(
     }
   })
   .add({
-     // It can also haz an timeout generator function
+    // It can also be triggered by a timeout function
+    // The schedule function should at any invocation return the number of 
+    // milliseconds until next invocation of the do function
+    // It is called initially, then typically after the do function has been
+    // executed.
     schedule: () => { return 30000; },  // Every 30 seconds (sort of...)
     do: (cache, broker) => { // Obviously timeouts have no topic or message
       return [
@@ -182,8 +186,8 @@ broker(
     }
   ])
 
-  // The above could be imported as a function from a separate file
-  .add(remoteControl)
+  // The above could be imported as an object from a separate file
+  .add(remoteControl) // remoteControl = [{topic, do}, {schedule, do}, ...]
 
   // Or if you want to reuse an automation across multiple...things, export
   // generator functions from your imports
