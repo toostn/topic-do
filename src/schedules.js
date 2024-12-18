@@ -22,18 +22,36 @@ export const once = (initialDelay = 0) => {
   }
 };
 
-// Fires every day at a given time
-export const daily = (hour, minute = 0, second = 0) => {
+export const DAYS = {
+  weekdays: [1, 2, 3, 4, 5],
+  weekends: [0, 6],
+  all: [0, 1, 2, 3, 4, 5, 6]
+};
+
+// Fires on given days at the specified time
+// TODO: Should add a safeguard against insane values for on, as it can cause an
+// infinite loop until time number reaches max value.
+export const daily = ({at, on}) => {
   return (now = Date.now()) => {
     const next = new Date();
-    next.setHours(hour, minute, second, 0);
+    next.setHours(...at, 0);
 
     if (now > next.getTime()) {
-      next.setDate(next.getDate() + 1);
+      do {
+        next.setDate(next.getDate() + 1);
+      } while (on.includes(next.getDay()) === false);
     }
 
     return next.getTime() - now;
   }
+};
+
+// Fires every day at a given time
+export const dailyAt = (hour, minute = 0, second = 0) => {
+  return daily({
+    at: [hour, minute, second],
+    on: DAYS.all
+  });
 };
 
 // Run a callback between two given recurring scheduled times
