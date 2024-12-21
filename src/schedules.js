@@ -33,25 +33,25 @@ export const daily = (scheduler, on = DAYS.all) => {
   return (now = Date.now()) => {
     let date = new Date(now);
     date.setHours(0, 0, 0, 0);
-    let day = date.getDay();
-    let next = now;
+    let next = -1;
     let count = 0;
 
     do {
-      if (on.includes(day)) {
-        date.setDay(day);
-        next = scheduler(date.getTime());
+      //console.log('It is day: ', date.getDay());
+      if (on.includes(date.getDay())) {
+        //console.log("Evaluating date: ", date);
+        next = (date.getTime() - now) + scheduler(date.getTime());
+        //console.log('checking day ', date.getDay());
+        //console.log('got time: ', new Date(next));
+      } else {
+        //console.log('not today!');
       }
 
-      day += 1;
+      date.setDate(date.getDate() + 1);
+      //console.log('condition: ', next, now);
+    } while (next < 0 && ++count <= 7);
 
-      if (day > 6) {
-        day = 0;
-      }
-      count++;
-    } while (next <= now && count <= 7);
-
-    return next - now;
+    return next;
   };
 };
 
