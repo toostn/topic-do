@@ -28,30 +28,40 @@ export const DAYS = {
   all: [0, 1, 2, 3, 4, 5, 6]
 };
 
-// Fires on given days at the specified time
-// TODO: Should add a safeguard against insane values for on, as it can cause an
-// infinite loop until time number reaches max value.
-export const daily = ({at, on}) => {
+
+export const daily = (scheduler, on = DAYS.all) => {
   return (now = Date.now()) => {
-    const next = new Date();
-    next.setHours(...at, 0);
+    let date = new Date(now);
+    date.setHours(0, 0, 0, 0);
+    let day = date.getDay();
+    let next = now;
+    let count = 0;
 
-    if (now > next.getTime()) {
-      do {
-        next.setDate(next.getDate() + 1);
-      } while (on.includes(next.getDay()) === false);
-    }
+    do {
+      if (on.includes(day)) {
+        date.setDay(day);
+        next = scheduler(date.getTime());
+      }
 
-    return next.getTime() - now;
-  }
+      day += 1;
+
+      if (day > 6) {
+        day = 0;
+      }
+      count++;
+    } while (next <= now && count <= 7);
+
+    return next - now;
+  };
 };
 
-// Fires every day at a given time
-export const dailyAt = (hour, minute = 0, second = 0) => {
-  return daily({
-    at: [hour, minute, second],
-    on: DAYS.all
-  });
+export const at = (hours, minutes = 0, seconds = 0) => {
+  return (now = Date.now()) => {
+    const next = new Date(now);
+    next.setHours(hours, minutes, seconds, 0);
+
+    return next.getTime() - now;
+  };
 };
 
 // Run a callback between two given recurring scheduled times
