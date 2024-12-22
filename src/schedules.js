@@ -37,18 +37,11 @@ export const daily = (scheduler, on = DAYS.all) => {
     let count = 0;
 
     do {
-      //console.log('It is day: ', date.getDay());
       if (on.includes(date.getDay())) {
-        //console.log("Evaluating date: ", date);
         next = (date.getTime() - now) + scheduler(date.getTime());
-        //console.log('checking day ', date.getDay());
-        //console.log('got time: ', new Date(next));
-      } else {
-        //console.log('not today!');
       }
 
       date.setDate(date.getDate() + 1);
-      //console.log('condition: ', next, now);
     } while (next < 0 && ++count <= 7);
 
     return next;
