@@ -1,3 +1,5 @@
+import { validateDelay } from './timers.js';
+
 export const matchTopic = (filter, topic) => {
   if (filter.startsWith('$share/')) {
     const shared = /^\$share\/([^/#+]+)\/(.+)$/.exec(filter);
@@ -40,6 +42,7 @@ export const cache = () => {
 // Creates a function that runs the passed callback only once, after the
 // function has not been called for the amount of milliseconds specified.
 export const singleTimer = (delay) => {
+  validateDelay(delay);
   let timeout = null;
 
   return (callback) => {

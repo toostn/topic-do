@@ -1,5 +1,6 @@
 import * as mqtt from 'mqtt';
 import { matchTopic, cache } from './util.js';
+import { validateDelay } from './timers.js';
 
 export const broker = (url, mqttOptions, options = {}) => {
   const _options = {parsePayload: true, ...options};
@@ -49,7 +50,13 @@ export const broker = (url, mqttOptions, options = {}) => {
         _pendingSubscriptions = [];
 
         for (let [timeoutFunc, callback] of _pendingScheduling) {
-          const timeout = timeoutFunc();
+          let timeout;
+          try {
+            timeout = validateDelay(timeoutFunc(), true);
+          } catch (error) {
+            _reportRuleError(error);
+            continue;
+          }
 
           if (timeout < 0) continue;
 
@@ -112,13 +119,24 @@ export const broker = (url, mqttOptions, options = {}) => {
     }
 
     for (let [topic, message] of messages) {
-      const stringMessage =  (typeof message === "object")
-        ? JSON.stringify(message)
-        : message;
+      let payload;
+      if (Buffer.isBuffer(message) || typeof message === 'string') {
+        payload = message;
+      } else if (message instanceof Uint8Array) {
+        payload = Buffer.from(message.buffer, message.byteOffset, message.byteLength);
+      } else {
+        if (typeof message === 'number' && !Number.isFinite(message)) {
+          throw new TypeError('Publishing non-finite numbers is not supported');
+        }
+        payload = JSON.stringify(message);
+        if (typeof payload !== 'string') {
+          throw new TypeError('Payload must be a string, Buffer, Uint8Array, or JSON-serializable value');
+        }
+      }
 
-      _log(`Publishing message: ${stringMessage} to topic: ${topic}`);
+      _log(`Publishing message: ${payload} to topic: ${topic}`);
 
-      _client.publish(topic, stringMessage);
+      _client.publish(topic, payload);
     }
   };
 

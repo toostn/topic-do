@@ -37,6 +37,27 @@ test('cache stores the latest value, retains references, and isolates instances'
   assert.equal(first.get('light'), false);
 });
 
+for (const delay of [NaN, Infinity, -Infinity, -1, undefined, null, '100', 2147483648]) {
+  test(`timer helpers reject invalid delay ${String(delay)}`, () => {
+    assert.throws(() => singleTimer(delay), { name: typeof delay !== 'number' || !Number.isFinite(delay) ? 'TypeError' : 'RangeError' });
+    assert.throws(() => triggerTimer(null, ['light'], 'on', 'off', delay));
+  });
+}
+
+test('singleTimer accepts zero and the maximum Node timeout', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const immediate = t.mock.fn();
+  singleTimer(0)(immediate);
+  t.mock.timers.tick(1);
+  assert.equal(immediate.mock.callCount(), 1);
+  const delayed = t.mock.fn();
+  singleTimer(2147483647)(delayed);
+  t.mock.timers.tick(2147483646);
+  assert.equal(delayed.mock.callCount(), 0);
+  t.mock.timers.tick(1);
+  assert.equal(delayed.mock.callCount(), 1);
+});
+
 test('singleTimer debounces to the most recent callback and can be reused', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const timer = singleTimer(100);

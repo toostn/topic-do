@@ -263,6 +263,112 @@ for (const trigger of ['topic', 'schedule']) {
   });
 }
 
+for (const delay of [NaN, Infinity, -Infinity, undefined, null, '100', 2147483648]) {
+  test(`invalid schedule delay ${String(delay)} is reported and disables only that rule`, async t => {
+    const report = t.mock.method(console, 'error', () => {});
+    const setTimer = globalThis.setTimeout;
+    let unsafeTimers = 0;
+    t.mock.method(globalThis, 'setTimeout', (...args) => {
+      // A regression must fail, not trap the fake clock in an endless rapid loop.
+      if (args.length === 2 && Object.is(args[1], delay)) {
+        unsafeTimers++;
+        return 0;
+      }
+      return setTimer(...args);
+    });
+    const invalid = t.mock.fn();
+    const valid = t.mock.fn();
+    connected(t, broker('mqtt://test.invalid').add([
+      { schedule: () => delay, do: invalid },
+      { schedule: once(10), do: valid }
+    ]));
+    t.mock.timers.tick(10000);
+    await setImmediate();
+    assert.equal(unsafeTimers, 0);
+    assert.equal(invalid.mock.callCount(), 0);
+    assert.equal(valid.mock.callCount(), 1);
+    assert.equal(report.mock.callCount(), 1);
+    assert.ok(report.mock.calls[0].arguments[1] instanceof Error);
+  });
+}
+
+test('a throwing scheduler does not interrupt other scheduled rules', async t => {
+  const error = new Error('scheduler failed');
+  const report = t.mock.method(console, 'error', () => {});
+  const valid = t.mock.fn();
+  connected(t, broker('mqtt://test.invalid').add([
+    { schedule: () => { throw error; }, do: () => assert.fail('invalid job ran') },
+    { schedule: once(10), do: valid }
+  ]));
+  t.mock.timers.tick(10);
+  await setImmediate();
+  assert.equal(valid.mock.callCount(), 1);
+  assert.deepEqual(calls(report), [['topic-do: rule execution failed', error]]);
+});
+
+test('the maximum Node timeout is accepted without firing early', t => {
+  const handler = t.mock.fn();
+  connected(t, broker('mqtt://test.invalid').add({ schedule: once(2147483647), do: handler }));
+  t.mock.timers.tick(2147483646);
+  assert.equal(handler.mock.callCount(), 0);
+  t.mock.timers.tick(1);
+  assert.equal(handler.mock.callCount(), 1);
+});
+
+for (const [name, payload, expected] of [
+  ['Buffer', Buffer.from([0, 255, 128]), Buffer.from([0, 255, 128])],
+  ['Uint8Array', new Uint8Array([0, 255, 128]), Buffer.from([0, 255, 128])],
+  ['number', 42, '42'],
+  ['boolean', false, 'false'],
+  ['null', null, 'null'],
+  ['array', [1, 2], '[1,2]'],
+  ['empty string', '', '']
+]) {
+  test(`publishing ${name} produces an mqtt.js-safe payload`, async t => {
+    connected(t, broker('mqtt://test.invalid').add({ topic: 'input', do: () => ['output', payload] }));
+    receive('input', '{}');
+    await setImmediate();
+    assert.deepEqual(calls(client.publish), [['output', expected]]);
+    if (Buffer.isBuffer(payload)) {
+      assert.equal(client.publish.mock.calls[0].arguments[1], payload);
+    }
+  });
+}
+
+for (const payload of [undefined, () => {}, Symbol('unsupported'), 1n, NaN, Infinity, { toJSON: () => undefined }]) {
+  test(`unsupported publishing payload ${String(payload)} is reported instead of sent`, async t => {
+    const report = t.mock.method(console, 'error', () => {});
+    connected(t, broker('mqtt://test.invalid').add({ topic: 'input', do: () => ['output', payload] }));
+    receive('input', '{}');
+    await setImmediate();
+    assert.equal(client.publish.mock.callCount(), 0);
+    assert.equal(report.mock.callCount(), 1);
+    assert.ok(report.mock.calls[0].arguments[1] instanceof TypeError);
+  });
+}
+
+test('Uint8Array publishing uses only the view bytes', async t => {
+  const payload = new Uint8Array([1, 2, 3, 4]).subarray(1, 3);
+  connected(t, broker('mqtt://test.invalid').add({ topic: 'input', do: () => ['output', payload] }));
+  receive('input', '{}');
+  await setImmediate();
+  assert.deepEqual(calls(client.publish), [['output', Buffer.from([2, 3])]]);
+});
+
+test('circular publishing payloads are reported without sending or interrupting other rules', async t => {
+  const payload = {};
+  payload.self = payload;
+  const report = t.mock.method(console, 'error', () => {});
+  connected(t, broker('mqtt://test.invalid').add([
+    { topic: 'input', do: () => ['output', payload] },
+    { topic: 'input', do: () => ['output', 'ok'] }
+  ]));
+  receive('input', '{}');
+  await setImmediate();
+  assert.deepEqual(calls(client.publish), [['output', 'ok']]);
+  assert.equal(report.mock.callCount(), 1);
+});
+
 test('special topic names are subscribed, dispatched, and cached safely', t => {
   const topics = ['__proto__', 'constructor', 'toString'];
   const handler = t.mock.fn();
