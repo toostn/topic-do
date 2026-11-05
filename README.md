@@ -11,15 +11,13 @@ library, not a standalone service or device integration.
 1. Connect your devices to an MQTT broker, for example through
    [zigbee2mqtt](https://www.zigbee2mqtt.io/) or
    [zwave-js-ui](https://github.com/zwave-js/zwave-js-ui).
-2. Install the library: `npm install topic-do`.
+2. Use **Node 26 LTS, version 26.13.0 or newer within Node 26**, and install the library:
+   `npm install topic-do`.
 3. Create an ES module (`automation.mjs`, or use `"type": "module"` in your project).
 4. Configure your broker and add rules.
 
-**Checkout versus npm:** this README describes the new API on `main`. The package
-metadata still says `0.4.2`; these changes have not been versioned for a new release
-in this repository. Existing users of the previous API should read
-[Migration from the previous API](#migration-from-the-previous-api) and
-[CHANGELOG.md](CHANGELOG.md). Do not assume an existing npm release contains this API.
+This README describes **1.0.0**. Upgrading from 0.x? Read
+[Migration from 0.x](#migration-from-0x) and [CHANGELOG.md](CHANGELOG.md).
 
 ```js
 import { broker } from 'topic-do';
@@ -35,7 +33,7 @@ const automation = broker(
   },
   {
     debug: false,
-    parseJson: true,
+    parsePayload: true,
     cacheTopics: [light]
   }
 );
@@ -43,10 +41,10 @@ const automation = broker(
 automation
   .add({
     topic: 'home/zigbee2mqtt/master_bedroom_switch',
-    do: (topic, message, cache, publish) => {
+    do: (topic, payload, cache, publish) => {
       return [
         `${light}/set`,
-        { state: message.action === 'on' ? 'ON' : 'OFF' }
+        { state: payload.action === 'on' ? 'ON' : 'OFF' }
       ];
     }
   })
@@ -76,24 +74,29 @@ The third argument accepts:
 | Option | Behavior |
 | --- | --- |
 | `debug` | Set to `true` for incoming-message, publishing, subscription, and connection logs. Logs may contain sensitive payloads. |
-| `parseJson` | Set to `true` to attempt JSON parsing; failed parses remain raw MQTT Buffers. |
+| `parsePayload` | Defaults to `true`: parse JSON, otherwise return valid UTF-8 text, otherwise preserve the original Buffer. Set to `false` for raw Buffers. |
 | `cacheTopics` | Array of additional topic filters to subscribe to, even without handlers. |
 | `cache` | Optional custom synchronous cache implementing `get(key)` and `set(key, value)`. |
 
-Currently JSON parsing defaults to `true` **only if the whole third argument is
-omitted**. If you supply an options object, include `parseJson: true` explicitly
-when you want it enabled.
+Defaults apply even when you supply only some options. `parsePayload` replaces the
+old `parseJson` option (no compatibility alias); rename it in existing configurations.
+UTF-8 decoding is strict so invalid bytes are preserved as a Buffer rather than
+silently replaced. Valid UTF-8 binary data is indistinguishable from text; use
+`parsePayload: false` when you require raw bytes.
 
 ## Rules and publishing
 
 `.add(rule)` and `.add([rule, ...])` both return the automation object for chaining.
 
-A topic rule accepts one filter or an array of filters:
+A topic rule accepts one MQTT filter or an array of filters. `+`, `#`, and shared
+subscriptions (`$share/group/filter`) are supported; leading wildcards do not match
+`$` system topics. A handler runs for each matching registered filter, so overlapping
+filters may invoke it more than once for a single incoming publication.
 
 ```js
 {
   topic: ['home/sensor_a', 'home/sensor_b'],
-  do: (topic, message, cache, publish) => { /* ... */ }
+  do: (topic, payload, cache, publish) => { /* ... */ }
 }
 ```
 
@@ -113,17 +116,22 @@ Handlers may return:
 - A promise resolving to either of those.
 - Nothing (`undefined`, `null`, or an empty array) to publish nothing.
 
-Use string payloads or JSON-serializable objects. Objects are JSON-stringified
-before publication. The current API does not expose per-message QoS/retain options
-or delivery acknowledgments.
+Strings and Buffers are published unchanged; `Uint8Array` views are converted to
+Buffers containing only the view's bytes. Objects, arrays, finite numbers, booleans,
+and `null` are JSON-encoded. Unsupported values (such as `undefined`, functions,
+symbols, BigInts, non-finite numbers, and circular objects) raise an error rather
+than being sent to mqtt.js. Errors in handler-returned publications are logged by
+the rule wrapper; direct `publish()` callers must handle thrown errors themselves.
+The API does not expose per-message QoS/retain options or delivery acknowledgments.
 
 The last handler argument is a **publishing function**, not a broker or mqtt.js
 client. Call `publish([topic, payload])` to publish directly, for example from an
 external event callback. Do not call `publish.publish(...)`. Returning messages is
 usually simpler; avoid both returning and directly publishing the same message.
 
-Handlers may be async. Currently the library does not contain thrown errors or
-rejected promises: handle failures in your own handlers until this is repaired.
+Handlers may be async. Thrown errors and rejected promises are logged to
+`console.error` without interrupting other rules; failed handlers may run again
+on their next trigger.
 
 ### Cache
 
@@ -134,8 +142,8 @@ Always handle missing values, for example `cache.get(light)?.state`.
 
 The default cache is in memory, has no expiry or size limit, and is not persistent.
 A subscription does not guarantee an initial value unless the broker has a retained
-message or the device publishes one. There are also known special-key issues with
-the current plain-object storage; see [REVIEW.md](REVIEW.md).
+message or the device publishes one. Special keys such as `__proto__` are stored
+as ordinary cache keys.
 
 ### Reusable rules
 
@@ -168,7 +176,7 @@ Import helpers from `topic-do/src/schedules.js`.
 | `at(hours, minutes = 0, seconds = 0)` | Offset to that time on the supplied/current local day; negative if already past. Not recurring by itself. |
 | `daily(scheduler, on = DAYS.all)` | Find the next eligible local day using the supplied scheduler. |
 | `DAYS.weekdays` / `DAYS.weekends` / `DAYS.all` | Day-number arrays; Sunday is `0`, Saturday is `6`. Custom arrays also work. |
-| `combine(...schedulers)` | Choose the smallest returned delay. Currently negative stop values also win, so do not combine an exhausted `once()` with recurring schedules. |
+| `combine(...schedulers)` | Choose the smallest non-negative delay, or `-1` if none remain. Do not use with `once()` schedulers; see below. |
 | `between(start, end, callback)` | Immediately call the callback if `start() > end()`. It is a conditional helper, not a recurring schedule. |
 
 For example, `daily(at(7, 30))` runs daily at 07:30 and
@@ -176,26 +184,67 @@ For example, `daily(at(7, 30))` runs daily at 07:30 and
 receives the candidate day's local midnight as a timestamp and returns an offset
 in milliseconds from that timestamp.
 
-Negative schedule results disable that rule. Use finite delays within Node's timer
-range; the implementation does not yet validate them. Timers are reconsidered
-after firing, without awaiting async handler completion, so async runs may overlap.
+**Do not use `combine()` with `once()` schedulers.** Composition evaluates every
+child, so a one-shot scheduler can be consumed even when another child wins. Use
+separate rules for one-shot and recurring work.
+
+Finite negative schedule results disable that rule. Otherwise, delays must be
+numbers between **0 and 2,147,483,647 ms** (about 24.8 days). Invalid values,
+oversized delays, and throwing schedulers are logged and disable only that rule;
+they are not clamped into rapid timers. `singleTimer()` and `triggerTimer()` reject
+invalid delays immediately, including negative values. Zero runs as soon as the
+event loop permits. Timers are reconsidered after firing, without awaiting async
+handler completion, so async runs may overlap.
 Wall-clock schedules use local time, including daylight-saving changes; they are
 not precision or real-time scheduling guarantees.
 
-## Migration from the previous API
+## Utility helpers
 
-The new API removes `.topicDo()`, `.scheduleDo()`, and `.use()` in favor of `.add()`.
+Import from `topic-do/src/util.js`:
+
+| Helper | Meaning |
+| --- | --- |
+| `matchTopic(filter, topic)` | Test a topic against an MQTT filter, including shared subscriptions. |
+| `cache()` | Create an independent in-memory store with synchronous `get(key)` and `set(key, value)`. |
+| `singleTimer(delay)` | Return a function accepting a callback; each call replaces the pending callback and restarts the delay (debounce). |
+| `triggerTimer(filter, topics, messageOn, messageOff, delay)` | Create a topic handler that returns on-messages and debounces direct publication of off-messages. |
+
+For example, keep a light on until a motion sensor has been quiet for one minute:
 
 ```js
-// Before                         // Now
-// app.topicDo(topic, handler);    app.add({ topic, do: handler });
-// app.scheduleDo(timer, handler); app.add({ schedule: timer, do: handler });
+import { triggerTimer } from 'topic-do/src/util.js';
 
-// Old reusable configuration:
-// app.use({ topicDo: [[topic, handler]], scheduleDo: [[timer, task]] });
-// New equivalent:
-// app.add([{ topic, do: handler }, { schedule: timer, do: task }]);
+const motionLight = {
+  topic: 'home/motion',
+  do: triggerTimer(
+    (topic, payload, cache) => payload.occupancy === true,
+    ['home/light/set'],
+    { state: 'ON' },
+    { state: 'OFF' },
+    60000
+  )
+};
+// Add to an existing automation: automation.add(motionLight);
 ```
+
+`topics` must be an array. A `null` filter accepts every trigger; otherwise it must
+return exactly `true`. A `null` or `undefined` on/off message omits that action.
+Rejected triggers do not reset the timer. Timer callbacks and external event
+callbacks run outside the rule error wrapper; handle errors inside those callbacks.
+
+## Migration from 0.x
+
+| Before | 1.0.0 |
+| --- | --- |
+| `app.topicDo(topics, handler)` | `app.add({ topic: topics, do: handler })` |
+| `app.scheduleDo(timer, handler)` | `app.add({ schedule: timer, do: handler })` |
+| `app.use({ topicDo: [[topic, handler]], scheduleDo: [[timer, task]] })` | `app.add([{ topic, do: handler }, { schedule: timer, do: task }])` |
+| `daily(7, 30)` | `daily(at(7, 30))` |
+| `parseJson: false` | `parsePayload: false` |
+
+Update your runtime to Node 26.13.0+ within the Node 26 LTS line. Payload parsing
+now defaults to enabled even with partial options; non-JSON text becomes a string
+rather than a Buffer. Set `parsePayload: false` to keep all incoming payloads raw.
 
 The daily scheduler also has a breaking change:
 
@@ -205,22 +254,48 @@ The daily scheduler also has a breaking change:
 const morning = daily(at(7, 30));
 ```
 
-There is no `dailyAt` compatibility export, despite an intermediate commit message
-mentioning one. Import `broker` as a named export and the one-shot helper as `once`;
-older README examples using a default import or `scheduleOnce` were incorrect.
-The publishing callback's type has not changed: it remains a function.
+Import `broker` as a named export and the one-shot helper as `once`; there is no
+default broker export, `scheduleOnce`, or `dailyAt` compatibility helper. The last
+handler argument remains a publishing function, not an object with `.publish()`.
+Outgoing binary data is now preserved, finite numbers/booleans are JSON-encoded,
+and unsupported payloads or unsafe timer delays are rejected as described above.
 
 ## Project status and development
 
-There is no build step. Run `npm ci` to install the locked dependencies. `npm test`
-is currently a failing placeholder, not a working test suite. Syntax can be checked
-with `for file in src/*.js; do node --check "$file" || exit; done`.
+There is no build step. Runtime and development target **Node 26 LTS**, starting
+at **26.13.0** (`engines.node: ^26.13.0`). Only this major version is supported and
+tested. `.nvmrc` selects the Node 26 line; with nvm, run `nvm install` and `nvm use`
+before installing dependencies. Future LTS majors will be adopted explicitly.
 
-Known maintenance work includes error containment, MQTT wildcard edge cases,
-scheduler composition, dependency updates, and a shutdown/cancellation API. There
-is currently no public method to close the client or cancel timers. See
-[REVIEW.md](REVIEW.md) for the baseline findings and [AGENTS.md](AGENTS.md) for
-repository guidance. Please open issues for bugs or documentation requests.
+```sh
+npm ci
+npm test
+npm run test:coverage
+```
+
+Tests use Node's built-in `node:test` and `assert`, with no added dependencies.
+The npm scripts enable experimental module mocking to replace mqtt.js before the
+entry point is imported; Node's experimental warnings are expected. Unit-test MQTT
+clients are mocked, timers are controlled, and no broker credentials or network
+connection are needed. Scheduler tests use an explicit timezone and include DST boundaries.
+The single test target is Node 26 LTS; the suite has been checked on 26.13.0.
+
+Run `npm run test:integration` separately for a real-client reconnect test. It
+requires a locally installed Mosquitto executable (`mosquitto`, `/usr/sbin/mosquitto`,
+or an explicit `MOSQUITTO_BIN` path). It creates a temporary broker bound only to
+`127.0.0.1` on an ephemeral port, restarts it, and verifies payload round-trips,
+restored subscriptions, rules added offline, and no duplicated rule/schedule setup.
+It does not connect to your home broker or require another npm dependency.
+
+Unit tests live in `test/broker.test.js`, `test/schedules.test.js`, and `test/util.test.js`;
+the integration test is in `test/integration/reconnect.test.js`.
+All tests are required to pass, including regression coverage for handler errors,
+MQTT topic matching, scheduler composition, and special cache keys.
+
+Run `npm audit` as advisories change. See
+[AGENTS.md](https://github.com/toostn/topic-do/blob/main/AGENTS.md) for repository
+and release guidance. Please [open an issue](https://github.com/toostn/topic-do/issues)
+for bugs or documentation requests.
 
 ## This solution is better than...
 

@@ -1,69 +1,102 @@
 # Working on topic-do
 
-## Purpose and scope
+## Purpose
 
-A small, code-first MQTT automation library, not a standalone service. Keep the
-plain-JavaScript `{ topic, do }` / `{ schedule, do }` API lightweight. Avoid adding
-frameworks, configuration languages, or large dependencies without a concrete need.
+A small, code-first MQTT home-automation library, not a standalone service. Preserve
+the plain-JavaScript `{ topic, do }` / `{ schedule, do }` API. Avoid frameworks,
+configuration languages, and large dependencies without a concrete need.
 
 ## Repository map
 
-- `src/index.js`: MQTT connection, subscriptions, rule dispatch, scheduling, publishing.
+- `src/index.js`: MQTT connection, subscriptions, dispatch, schedules, publishing.
 - `src/schedules.js`: `combine`, `once`, `DAYS`, `daily`, `at`, `between`.
-- `src/util.js`: topic matching, in-memory cache, debounce and trigger helpers.
-- `README.md`: current public API, examples, and migration instructions.
-- `CHANGELOG.md`: unreleased API changes; package version remains `0.4.2`.
-- `package.json` / `package-lock.json`: npm metadata and dependency graph.
-- `REVIEW.md`: baseline review findings and proposed maintenance priorities.
+- `src/util.js`: topic matching, cache, debounce, and trigger helpers.
+- `src/timers.js`: shared Node-safe timer delay validation.
+- `test/*.test.js`: unit tests using `node:test` and `node:assert/strict`.
+- `test/integration/reconnect.test.js`: real-client reconnect test with isolated Mosquitto.
+- `test/fixtures/automation.js`: child-process automation for integration checks.
+- `README.md`: public API, examples, limitations, and migration from 0.x.
+- `CHANGELOG.md`: release history.
+- `package.json` / `package-lock.json`: package metadata and dependency graph.
 
-## Current API (describe reality, not presumed intent)
+## Runtime and API contract
 
-- Node.js ES modules (`"type": "module"`), with explicit `.js` relative imports.
-- The entry point exports **named** `broker(url, mqttOptions, options)`; no default export.
-- `broker()` returns an object with chainable `.add(ruleOrArray)` only.
-- Topic handlers receive `(topic, message, cache, publish)`; scheduled handlers receive
-  `(cache, publish)`. The last argument is a function, not a broker/client object.
-- Handlers can return `[topic, payload]`, arrays of such pairs, promises of either,
-  or nothing. The publisher takes the same pair/array format.
-- Cache interface: synchronous `get(key)` / `set(key, value)`; injectable via `options.cache`.
-- A schedule returns milliseconds until execution; negative values disable it.
-  It is evaluated again after the timer fires, without awaiting async handler completion.
-- `at()` returns a same-day offset (possibly negative); use `daily(at(...))` for recurrence.
-- Schedules use local dates/time. The exported one-shot helper is `once`, not `scheduleOnce`.
-- MQTT options are forwarded to mqtt.js. Parsing behavior, error handling, timer
-  composition, and lifecycle have known issues; see `REVIEW.md` before relying on them.
+- Target Node 26 LTS only, starting at 26.13.0 (`engines.node: ^26.13.0`). `.nvmrc`
+  selects this major. Adopt future LTS majors explicitly; no multi-major test matrix.
+- ES modules with explicit `.js` relative imports; no build step.
+- The entry point exports named `broker(url, mqttOptions, options)`, not a default.
+- `broker()` returns an object with chainable `.add(ruleOrArray)`. With default
+  connection options, `.add()` starts the manual MQTT connection.
+- Topic handlers receive `(topic, payload, cache, publish)`; scheduled handlers
+  receive `(cache, publish)`. `publish` is a function, not a client/broker object.
+- Return `[topic, payload]`, arrays of pairs, promises of either, or nothing.
+- Incoming `parsePayload` defaults to true, including with partial options: strict
+  UTF-8 decoding, then JSON when valid, otherwise text; invalid UTF-8 remains the
+  original Buffer. False preserves raw Buffers. No `parseJson` compatibility alias.
+- Publish strings/Buffers unchanged, Uint8Array view bytes as Buffers, and other
+  supported values as JSON. Reject unsupported or non-serializable payloads.
+- Synchronous handler errors, rejected promises, and handler-returned publication
+  errors are logged to `console.error`; other rules continue. Direct publishers,
+  timer callbacks, and external event callbacks must handle their own errors.
+- Cache interface is synchronous `get(key)` / `set(key, value)`, injectable through
+  `options.cache`. The default cache is unbounded, in-memory, and keyed by exact
+  received topic; subscriptions do not guarantee an initial value.
+- Schedulers return milliseconds. Finite negatives stop a rule; non-negative delays
+  must be finite numbers no larger than 2147483647. Invalid/throwing schedulers are
+  reported and disabled. Timer helpers reject invalid delays immediately.
+- Scheduling does not await async handlers, so executions may overlap. Dates use
+  local time. `at()` is a same-day offset; use `daily(at(...))` for recurrence.
+- Do not combine `once()` with `combine()`: evaluating a non-winning one-shot child
+  still consumes it. Use separate rules. One-shot helper instances are stateful;
+  create a fresh one for each independent rule.
+- QoS/retain/delivery acknowledgments are not exposed by the publishing wrapper.
+  Keep documented limitations explicit rather than promising delivery guarantees.
+- Preserve existing helper deep imports under `topic-do/src/`; do not add an
+  `exports` map that accidentally blocks them.
 
-## Commands and validation
+## Commands
 
 ```sh
-npm ci                          # Reproduce the lockfile; replaces node_modules
-npm test                        # Currently a placeholder that deliberately fails
-for file in src/*.js; do node --check "$file" || exit; done
-npm ls --depth=0
-npm audit                       # Requires registry access; assess applicability too
-npm pack --dry-run              # Inspect the prospective published package
+nvm install && nvm use           # If using nvm
+npm ci                          # Install exactly the lockfile
+npm test                        # Unit suite; no broker or network needed
+npm run test:coverage            # Built-in unit coverage
+npm run test:integration         # Requires local Mosquitto; loopback only
+npm audit                       # Registry access required
+npm pack --dry-run              # Inspect package contents
 ```
 
-There is no build step, linter, test suite, CI workflow, or declared Node engine range.
-Do not report syntax checks as functional tests. Prefer Node's built-in `node:test`
-and `assert` when introducing coverage, with mocked MQTT clients and controlled time.
-Agree/document the supported Node versions before choosing version-specific test APIs.
+The unit scripts enable `--experimental-test-module-mocks`; Node warnings are
+expected. Keep MQTT mocked before importing the entry point. Use test-context mock
+timers, not sleeps. Broker tests are sequential within their file because the fake
+client is shared. Scheduler tests set their own timezone in an isolated test process.
+Test midnight, DST, exact boundaries, malformed input, and synchronous/async errors.
 
-## Safety and change discipline
+Integration tests require Mosquitto (`MOSQUITTO_BIN` can override the executable),
+create an ephemeral loopback-only broker, and run automation in an owned child
+process. Never connect to a household broker or publish real device commands during
+checks without explicit approval. Keep credentials out of files and logs.
 
-- Never connect to a real home MQTT broker or publish device commands during checks
-  without explicit approval. Examples can actuate real devices.
-- Use mocks or an explicitly isolated local test broker. Keep credentials out of
-  source, fixtures, logs, and documentation.
-- Add regression coverage before fixing behavior; keep code, exports, and README
-  examples consistent. Distinguish compatibility fixes from intentional API changes.
-- Test synchronous throws and rejected promises, disconnect/reconnect, cancellation,
-  malformed input, MQTT wildcards/shared subscriptions, and scheduler boundaries.
-- Use explicit timestamps/time zones for scheduler tests, including midnight and DST;
-  avoid timing-sensitive sleeps and network-dependent unit tests.
-- Preserve the existing two-space, semicolon-oriented ESM style; avoid unrelated reformatting.
-- Keep dependency updates deliberate, update the lockfile together with metadata,
-  inspect audit results, and do not use `npm audit fix --force` blindly.
-- Do not edit generated `node_modules` or add installation artifacts to git.
-- Check `git diff --check` and inspect the diff before finishing. State exactly what
-  was verified, what failed, and what could not be tested.
+## Change discipline
+
+- Add failing regression coverage before behavior fixes; keep all tests required.
+- Keep code, public exports, README examples, and changelog consistent. Identify
+  intentional breaking changes rather than disguising them as internal cleanup.
+- Follow the existing two-space, semicolon-oriented ESM style; avoid unrelated formatting.
+- Keep dependency updates deliberate and metadata/lockfile synchronized. Assess
+  audit applicability; never blindly run `npm audit fix --force`.
+- Do not edit generated `node_modules` or commit install artifacts or tarballs.
+- Inspect `git diff`, run `git diff --check`, and state precisely what was verified.
+- There is no linter or CI workflow. Do not equate coverage or syntax checks with
+  end-to-end correctness.
+
+## Release checklist
+
+1. Finalize README and changelog; bump package and lockfile versions together.
+2. Run unit tests, coverage, isolated integration tests, audit, and diff checks on Node 26.
+3. Inspect the npm tarball and smoke-test its imports in a clean temporary project.
+   The package `files` allowlist includes runtime source and changelog; README,
+   license, and package metadata are included by npm. Tests/repository notes stay out.
+4. Create the release commit, then an annotated `v<version>` tag pointing to it.
+5. Push commits/tags and publish to npm only with explicit user authorization.
+   A local tag does not mean the release has been published to the registry.

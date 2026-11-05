@@ -9,8 +9,20 @@
     "mqtt": "^5.1.4"
   },
   "description": "High code automation system for mqtt",
-  "version": "0.4.2",
+  "version": "1.0.0",
   "main": "src/index.js",
+  "files": [
+    "src/",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toostn/topic-do.git"
+  },
+  "bugs": {
+    "url": "https://github.com/toostn/topic-do/issues"
+  },
+  "homepage": "https://github.com/toostn/topic-do#readme",
   "devDependencies": {},
   "scripts": {
     "test": "node --experimental-test-module-mocks --test test/*.test.js",
