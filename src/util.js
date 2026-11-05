@@ -1,17 +1,36 @@
-export const matchTopic = (ts,t) => {
-  if (ts == "#") {
-    return true;
-  } else if(ts.startsWith("$share")){
-    ts = ts.replace(/^\$share\/[^#+/]+\/(.*)/g,"$1");
+export const matchTopic = (filter, topic) => {
+  if (filter.startsWith('$share/')) {
+    const shared = /^\$share\/([^/#+]+)\/(.+)$/.exec(filter);
+    if (shared === null) return false;
+    filter = shared[2];
   }
 
-  const re = new RegExp("^"+ts.replace(/([\[\]\?\(\)\\\\$\^\*\.|])/g,"\\$1").replace(/\+/g,"[^/]+").replace(/\/#$/,"(\/.*)?")+"$");
+  if (filter.length === 0 || topic.length === 0) return false;
 
-  return re.test(t);
+  const levels = filter.split('/');
+  const topicLevels = topic.split('/');
+
+  // Wildcards must occupy whole levels, and # must be last.
+  if (levels.some((level, index) =>
+    (level.includes('+') && level !== '+') ||
+    (level.includes('#') && (level !== '#' || index !== levels.length - 1))
+  )) return false;
+
+  // Leading wildcards never match MQTT system topics, including shared filters.
+  if (topic.startsWith('$') && !filter.startsWith('$')) return false;
+
+  for (let index = 0; index < levels.length; index++) {
+    const level = levels[index];
+    if (level === '#') return true;
+    if (index >= topicLevels.length) return false;
+    if (level !== '+' && level !== topicLevels[index]) return false;
+  }
+
+  return levels.length === topicLevels.length;
 };
 
 export const cache = () => {
-  const items = {};
+  const items = Object.create(null);
   return {
     get: (key) => items[key],
     set: (key, value) => items[key] = value

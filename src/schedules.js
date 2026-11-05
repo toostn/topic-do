@@ -1,10 +1,14 @@
 // Combines all schedulers passed as arguments, fires on every timeout
 export const combine = (...intervals) => {
   return (now = Date.now()) => {
-    return intervals
-      .reduce((acc, curr) => {
-        return Math.min(acc, curr(now));
-      }, Number.MAX_VALUE);
+    let next = -1;
+    for (const scheduler of intervals) {
+      const delay = scheduler(now);
+      if (delay >= 0 && (next < 0 || delay < next)) {
+        next = delay;
+      }
+    }
+    return next;
   };
 };
 

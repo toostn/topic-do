@@ -1,10 +1,12 @@
 import * as mqtt from 'mqtt';
 import { matchTopic, cache } from './util.js';
 
-export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
-  let _pendingSubscriptions = _options.cacheTopics || [];
+export const broker = (url, mqttOptions, options = {}) => {
+  const _options = {parsePayload: true, ...options};
+  const _decoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
+  let _pendingSubscriptions = [...(_options.cacheTopics || [])];
   let _pendingScheduling = [];
-  let _callbacks = {};
+  const _callbacks = Object.create(null);
 
   const _cache = _options.cache || cache();
   const _client = mqtt.connect(url, {manualConnect: true, ...mqttOptions});
@@ -17,7 +19,7 @@ export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
   _client.on('message', (topic, message) => {
     _log(`Got topic: ${topic} with message: ${message}`);
 
-    const parsedMessage = _parseMessageIfNeeded(message);
+    const parsedMessage = _parsePayloadIfNeeded(message);
 
     _cache.set(topic, parsedMessage);
 
@@ -65,22 +67,39 @@ export const broker = (url, mqttOptions, _options = {parseJson: true}) => {
     });
   };
 
-  const _parseMessageIfNeeded = (message) => {
-    try {
-      return (_options.parseJson === true)
-        ? JSON.parse(message)
-        : message;
-    } catch (e) {
+  const _parsePayloadIfNeeded = (message) => {
+    if (_options.parsePayload !== true) {
       return message;
+    }
+
+    let text;
+    try {
+      // Decode strictly before JSON parsing so invalid bytes cannot be replaced silently.
+      text = _decoder.decode(message);
+    } catch {
+      return message;
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
     }
   };
 
+  const _reportRuleError = (error) => {
+    console.error('topic-do: rule execution failed', error);
+  };
+
   const _callbackAndPublish = (callback, ...args) => {
-    return Promise
-      .resolve(callback(...args))
-      .then((messages) => {
-        publish(messages);
-      });
+    try {
+      return Promise.resolve(callback(...args))
+        .then(publish)
+        .catch(_reportRuleError);
+    } catch (error) {
+      _reportRuleError(error);
+      return Promise.resolve();
+    }
   };
 
   const publish = (messages) => {
