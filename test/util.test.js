@@ -225,6 +225,42 @@ test('cancelled timer callbacks are not invoked or reported', async t => {
   assert.equal(report.mock.callCount(), 0);
 });
 
+test('singleTimer close cancels pending callbacks and prevents rearming', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const timer = singleTimer(100);
+  const callback = t.mock.fn();
+  timer(callback);
+  await timer.close();
+  timer(callback);
+  t.mock.timers.tick(100);
+  assert.equal(callback.mock.callCount(), 0);
+});
+
+test('singleTimer close waits for an already running async callback', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const timer = singleTimer(100);
+  let finish;
+  timer(() => new Promise(resolve => { finish = resolve; }));
+  t.mock.timers.tick(100);
+  let closed = false;
+  const closing = timer.close().then(() => { closed = true; });
+  await setImmediate();
+  assert.equal(closed, false);
+  finish();
+  await closing;
+});
+
+test('triggerTimer close cancels delayed publications and ignores new triggers', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const handler = triggerTimer(null, ['light'], 'on', 'off', 100);
+  const publish = t.mock.fn();
+  handler('motion', {}, cache(), publish);
+  await handler.close();
+  assert.equal(handler('motion', {}, cache(), publish), undefined);
+  t.mock.timers.tick(100);
+  assert.equal(publish.mock.callCount(), 0);
+});
+
 test('cache supports special keys without inherited values', () => {
   const memory = cache();
   for (const key of ['toString', '__proto__', 'constructor', 'hasOwnProperty']) {

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Features
+
+- Add bounded, idempotent `broker.close({ timeoutMs = 5000 })`: stop dispatch and
+  scheduling, suppress late publications, run rule/handler close hooks, drain
+  returned work and end MQTT. Failed cleanup/deadline expiry rejects and force-ends
+  MQTT. No signal handlers or process exit are installed by the library.
+- Add `.close()` to timer-helper functions so shutdown can cancel pending callbacks
+  and wait for returned asynchronous callback work.
+
 ### Fixes
 
 - Report synchronous `singleTimer()` callback errors and rejected returned

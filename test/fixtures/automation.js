@@ -26,5 +26,12 @@ process.on('message', command => {
     process.send({ type: 'added' });
   } else if (command === 'snapshot') {
     process.send({ type: 'snapshot', handled, onceRuns, scheduled });
+  } else if (command === 'shutdown') {
+    app.close().then(() => {
+      process.send({ type: 'closed' }, () => process.disconnect());
+    }).catch(error => {
+      console.error(error);
+      process.exit(1);
+    });
   }
 });

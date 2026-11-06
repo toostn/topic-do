@@ -125,4 +125,12 @@ test('real MQTT reconnect restores subscriptions without duplicate rules or sche
   assert.deepEqual(snapshot, { type: 'snapshot', handled: 9, onceRuns: 1, scheduled: 1 });
   assert.equal(worker.exitCode, null, workerErrors);
   assert.equal(workerErrors, '', 'automation emitted an error during reconnection');
+
+  const exited = once(worker, 'exit');
+  worker.send('shutdown');
+  await waitForWorker(message => message.type === 'closed');
+  const [code, signal] = await exited;
+  assert.equal(code, 0);
+  assert.equal(signal, null);
+  assert.equal(workerErrors, '', 'automation emitted an error during graceful shutdown');
 });

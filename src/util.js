@@ -44,8 +44,11 @@ export const cache = () => {
 export const singleTimer = (delay) => {
   validateDelay(delay);
   let timeout = null;
+  let closed = false;
+  const active = new Set();
 
-  return (callback) => {
+  const timer = (callback) => {
+    if (closed) return;
     if (timeout !== null) {
       clearTimeout(timeout);
     }
@@ -54,21 +57,32 @@ export const singleTimer = (delay) => {
       timeout = null;
       const reportError = error => console.error('topic-do: timer callback failed', error);
       try {
-        Promise.resolve(callback()).catch(reportError);
+        const pending = Promise.resolve(callback()).catch(reportError);
+        active.add(pending);
+        pending.then(() => active.delete(pending));
       } catch (error) {
         reportError(error);
       }
     }, delay);
-  }
+  };
+  timer.close = () => {
+    closed = true;
+    clearTimeout(timeout);
+    timeout = null;
+    return Promise.allSettled([...active]).then(() => {});
+  };
+  return timer;
 };
 
 // Returns a topicDo handler that can send an initial message and then another
 // message after a delay. The sending of the second value is done only once,
 // after the handler has not been called for an entire delay
 export const triggerTimer = (filter, topics, messageOn, messageOff, delay) => {
-  let timer = singleTimer(delay);
+  const timer = singleTimer(delay);
+  let closed = false;
 
-  return (topic, message, cache, publish) => {
+  const handler = (topic, message, cache, publish) => {
+    if (closed) return;
     if (filter == null || filter(topic, message, cache) === true) {
       if (messageOff != null) {
         timer(() => {
@@ -81,4 +95,9 @@ export const triggerTimer = (filter, topics, messageOn, messageOff, delay) => {
         : [];
       }
   };
+  handler.close = () => {
+    closed = true;
+    return timer.close();
+  };
+  return handler;
 };

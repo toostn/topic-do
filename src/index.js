@@ -8,16 +8,24 @@ export const broker = (url, mqttOptions, options = {}) => {
   let _pendingSubscriptions = [...(_options.cacheTopics || [])];
   let _pendingScheduling = [];
   const _callbacks = Object.create(null);
+  const _scheduleTimers = new Set();
+  const _inFlight = new Set();
+  const _closeHooks = new Map();
+  let _closing = false;
+  let _closePromise;
 
   const _cache = _options.cache || cache();
   const _client = mqtt.connect(url, {manualConnect: true, ...mqttOptions});
 
-  _client.on('connect', () => {
+  const _onConnect = () => {
+    if (_closing) return;
     _log('Connected to broker');
     _tick();
-  });
+  };
+  _client.on('connect', _onConnect);
 
-  _client.on('message', (topic, message) => {
+  const _onMessage = (topic, message) => {
+    if (_closing) return;
     _log(`Got topic: ${topic} with message: ${message}`);
 
     const parsedMessage = _parsePayloadIfNeeded(message);
@@ -33,11 +41,13 @@ export const broker = (url, mqttOptions, options = {}) => {
         _callbackAndPublish(callback, topic, parsedMessage, _cache, publish);
       }
     }
-  });
+  };
+  _client.on('message', _onMessage);
 
   let _tickTimeout = null;
 
   const _tick = () => {
+    if (_closing) return;
     _tickTimeout = _tickTimeout || setTimeout(() => {
       if (_client.connected === false) {
         _client.connect();
@@ -60,11 +70,16 @@ export const broker = (url, mqttOptions, options = {}) => {
 
           if (timeout < 0) continue;
 
-          setTimeout(() => {
+          const timer = setTimeout(() => {
+            _scheduleTimers.delete(timer);
+            if (_closing) return;
             _callbackAndPublish(callback, _cache, publish);
-            _pendingScheduling.push([timeoutFunc, callback]);
-            _tick();
+            if (!_closing) {
+              _pendingScheduling.push([timeoutFunc, callback]);
+              _tick();
+            }
           }, timeout);
+          _scheduleTimers.add(timer);
         }
 
         _pendingScheduling = [];
@@ -99,17 +114,23 @@ export const broker = (url, mqttOptions, options = {}) => {
   };
 
   const _callbackAndPublish = (callback, ...args) => {
+    if (_closing) return Promise.resolve();
+    let pending;
     try {
-      return Promise.resolve(callback(...args))
+      pending = Promise.resolve(callback(...args))
         .then(publish)
         .catch(_reportRuleError);
     } catch (error) {
       _reportRuleError(error);
-      return Promise.resolve();
+      pending = Promise.resolve();
     }
+    _inFlight.add(pending);
+    pending.then(() => _inFlight.delete(pending));
+    return pending;
   };
 
   const publish = (messages) => {
+    if (_closing) return;
     if (Array.isArray(messages) === false || messages.length === 0) {
       return;
     }
@@ -147,7 +168,42 @@ export const broker = (url, mqttOptions, options = {}) => {
   };
 
   return {
+    close: function ({ timeoutMs = 5000 } = {}) {
+      if (_closePromise) return _closePromise;
+      validateDelay(timeoutMs);
+      _closing = true;
+      clearTimeout(_tickTimeout);
+      _tickTimeout = null;
+      for (const timer of _scheduleTimers) clearTimeout(timer);
+      _scheduleTimers.clear();
+      _pendingScheduling = [];
+      _pendingSubscriptions = [];
+      _client.off('connect', _onConnect);
+      _client.off('message', _onMessage);
+
+      let deadline;
+      const expired = new Promise((resolve, reject) => {
+        deadline = setTimeout(() => reject(new Error('topic-do: shutdown timed out')), timeoutMs);
+      });
+      // Defer cleanup one microtask so a handler that initiated shutdown has had
+      // its returned work registered in _inFlight before we snapshot it.
+      const draining = Promise.resolve().then(async () => {
+        const hooks = [..._closeHooks].map(([owner, hook]) => Promise.resolve().then(() => hook.call(owner)));
+        const ending = new Promise((resolve, reject) => {
+          _client.end(false, {}, error => error ? reject(error) : resolve());
+        });
+        const results = await Promise.allSettled([...hooks, ..._inFlight, ending]);
+        const errors = results.filter(result => result.status === 'rejected').map(result => result.reason);
+        if (errors.length) throw new AggregateError(errors, 'topic-do: shutdown failed');
+      });
+      _closePromise = Promise.race([draining, expired]).catch(error => {
+        try { _client.end(true); } catch { /* Preserve the original shutdown error. */ }
+        throw error;
+      }).finally(() => clearTimeout(deadline));
+      return _closePromise;
+    },
     add: function (rule) {
+      if (_closing) throw new Error('topic-do: broker is closed');
       if (Array.isArray(rule) === true) {
         for (let r of rule) {
           this.add(r);
@@ -155,6 +211,9 @@ export const broker = (url, mqttOptions, options = {}) => {
 
         return this;
       }
+
+      if (typeof rule.close === 'function') _closeHooks.set(rule, rule.close);
+      if (typeof rule.do?.close === 'function') _closeHooks.set(rule.do, rule.do.close);
 
       if ('topic' in rule && 'do' in rule) {
         const topics = Array.isArray(rule.topic) ? rule.topic : [rule.topic];

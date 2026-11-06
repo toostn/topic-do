@@ -27,6 +27,11 @@ configuration languages, and large dependencies without a concrete need.
 - The entry point exports named `broker(url, mqttOptions, options)`, not a default.
 - `broker()` returns an object with chainable `.add(ruleOrArray)`. With default
   connection options, `.add()` starts the manual MQTT connection.
+- `broker.close({ timeoutMs = 5000 })` is idempotent: stop dispatch/scheduling,
+  ignore late publications, invoke unique rule/handler close hooks, drain returned
+  work, and end MQTT. Cleanup/deadline failures reject and force-end the client.
+  Timer helpers expose `.close()`; `triggerTimer` hooks are registered by `.add()`.
+  The application owns process signals, cache persistence and process exit.
 - Topic handlers receive `(topic, payload, cache, publish)`; scheduled handlers
   receive `(cache, publish)`. `publish` is a function, not a client/broker object.
 - Return `[topic, payload]`, arrays of pairs, promises of either, or nothing.

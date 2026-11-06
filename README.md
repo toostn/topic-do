@@ -135,6 +135,23 @@ Handlers may be async. Thrown errors and rejected promises are logged to
 `console.error` without interrupting other rules; failed handlers may run again
 on their next trigger.
 
+### Shutdown
+
+`await automation.close({ timeoutMs: 5000 })` stops new dispatch, subscriptions,
+reconnection ticks and scheduled work immediately. Later direct publications and
+handler-returned messages are ignored. It cancels pending `triggerTimer` callbacks,
+invokes optional `rule.close()` and `rule.do.close()` hooks once per owner, and waits
+for returned handler work and cleanup promises while ending the MQTT connection.
+Previously queued MQTT writes are given an opportunity to drain, not a delivery
+or device-acknowledgment guarantee.
+
+Repeated calls return the same promise. Adding rules after close throws. If a
+cleanup fails, close rejects with an `AggregateError`; if the deadline expires it
+force-ends MQTT and rejects. The application owns logging, exit policy, and final
+cache persistence. Hooks should cancel external I/O and timers; detached work
+cannot be discovered or cancelled automatically. The library installs no process
+signal handlers and never calls `process.exit()`.
+
 ### Cache
 
 All received messages are stored by exact topic before handlers run. `cache.get(topic)`
@@ -242,6 +259,11 @@ failed actions are not automatically retried.
 Return asynchronous work from a timer callback so its rejection can be observed.
 A callback's return value is not automatically published. Debouncing replaces only
 pending callbacks; it does not cancel asynchronous work that has already started.
+The function returned by `singleTimer()` or `triggerTimer()` has a `.close()` method:
+it cancels pending callbacks, prevents rearming, and waits for already-running
+callback promises. A `triggerTimer` handler's close hook is automatically registered
+by `automation.add()`. For a `singleTimer` hidden inside a rule factory, expose it
+through that rule's `close` hook.
 External event callbacks, raw `setTimeout` callbacks, and detached promises remain
 outside these boundaries and must handle their own errors.
 

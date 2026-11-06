@@ -18,6 +18,7 @@ beforeEach(t => {
   client.connect = t.mock.fn();
   client.subscribe = t.mock.fn();
   client.publish = t.mock.fn();
+  client.end = t.mock.fn((force, options, callback) => { callback?.(); });
   connect = t.mock.fn(() => client);
 });
 
@@ -386,6 +387,69 @@ test('delayed triggerTimer publication errors are reported without stopping othe
     assert.equal(client.publish.mock.callCount(), run);
     assert.deepEqual(calls(client.publish).at(-1), ['good', 'off']);
   }
+});
+
+test('close stops dispatch, timers, reconnection and late publications while draining handlers', async t => {
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const handler = t.mock.fn(() => pending);
+  let directPublish;
+  const app = connected(t, broker('mqtt://test.invalid').add([
+    { topic: 'input', do: handler },
+    { topic: 'capture', do: (_, m, c, publish) => { directPublish = publish; } },
+    { schedule: once(100), do: () => assert.fail('schedule ran after shutdown') }
+  ]));
+  receive('capture', '{}');
+  receive('input', '{}');
+  const closing = app.close();
+  assert.equal(app.close(), closing);
+  assert.throws(() => app.add({ topic: 'later', do() {} }), /closed/i);
+  let closed = false;
+  closing.then(() => { closed = true; });
+  receive('input', '{}');
+  client.emit('connect');
+  t.mock.timers.tick(100);
+  directPublish(['late', 'off']);
+  await setImmediate();
+  assert.equal(closed, false);
+  assert.equal(handler.mock.callCount(), 1);
+  finish(['late', 'on']);
+  await closing;
+  assert.equal(client.publish.mock.callCount(), 0);
+  assert.equal(client.end.mock.callCount(), 1);
+  assert.equal(client.end.mock.calls[0].arguments[0], false);
+});
+
+test('close invokes unique rule/helper cleanup hooks and continues after hook failure', async t => {
+  const error = new Error('cleanup failed');
+  const hook = t.mock.fn(() => { throw error; });
+  const timer = triggerTimer(null, ['light'], null, 'off', 100);
+  const rule = { topic: 'motion', do: timer, close: hook };
+  const app = connected(t, broker('mqtt://test.invalid').add([rule, rule]));
+  receive('motion', '{}');
+  await assert.rejects(app.close(), { name: 'AggregateError' });
+  t.mock.timers.tick(100);
+  assert.equal(hook.mock.callCount(), 1);
+  assert.equal(client.publish.mock.callCount(), 0);
+  assert.ok(client.end.mock.callCount() >= 1);
+});
+
+test('close deadline force-closes a stuck MQTT connection', async t => {
+  const app = connected(t, broker('mqtt://test.invalid').add({ topic: 'input', do() {} }));
+  client.end = t.mock.fn(); // Simulate a client that never invokes its end callback.
+  const closing = app.close({ timeoutMs: 100 });
+  const rejected = assert.rejects(closing, /shutdown timed out/i);
+  await setImmediate();
+  t.mock.timers.tick(100);
+  await rejected;
+  assert.deepEqual(calls(client.end).map(args => args[0]), [false, true]);
+});
+
+test('close also cancels a not-yet-started connection tick', async t => {
+  const app = broker('mqtt://test.invalid').add({ topic: 'input', do() {} });
+  await app.close();
+  t.mock.timers.tick(100);
+  assert.equal(client.connect.mock.callCount(), 0);
 });
 
 test('special topic names are subscribed, dispatched, and cached safely', t => {
