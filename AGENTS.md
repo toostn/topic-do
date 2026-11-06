@@ -36,8 +36,11 @@ configuration languages, and large dependencies without a concrete need.
 - Publish strings/Buffers unchanged, Uint8Array view bytes as Buffers, and other
   supported values as JSON. Reject unsupported or non-serializable payloads.
 - Synchronous handler errors, rejected promises, and handler-returned publication
-  errors are logged to `console.error`; other rules continue. Direct publishers,
-  timer callbacks, and external event callbacks must handle their own errors.
+  errors are logged to `console.error`; other rules continue. `singleTimer` also
+  reports callback throws and rejections of returned promises/thenables;
+  `triggerTimer` uses that boundary for delayed publications. Other direct
+  publishers, raw timers, external event callbacks, and detached promises must
+  handle their own errors. Helper failures are not automatically retried.
 - Cache interface is synchronous `get(key)` / `set(key, value)`, injectable through
   `options.cache`. The default cache is unbounded, in-memory, and keyed by exact
   received topic; subscriptions do not guarantee an initial value.

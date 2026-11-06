@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { setImmediate } from 'node:timers/promises';
 import { beforeEach, mock, test } from 'node:test';
 import { once } from '../src/schedules.js';
+import { triggerTimer } from '../src/util.js';
 
 // Mock before importing the entry point. No real MQTT client can be constructed.
 let connect;
@@ -367,6 +368,24 @@ test('circular publishing payloads are reported without sending or interrupting 
   await setImmediate();
   assert.deepEqual(calls(client.publish), [['output', 'ok']]);
   assert.equal(report.mock.callCount(), 1);
+});
+
+test('delayed triggerTimer publication errors are reported without stopping other timers', async t => {
+  const report = t.mock.method(console, 'error', () => {});
+  connected(t, broker('mqtt://test.invalid').add([
+    { topic: 'motion', do: triggerTimer(null, ['bad'], null, 1n, 100) },
+    { topic: 'motion', do: triggerTimer(null, ['good'], null, 'off', 100) }
+  ]));
+  for (let run = 1; run <= 2; run++) {
+    receive('motion', '{}');
+    assert.doesNotThrow(() => t.mock.timers.tick(100));
+    await setImmediate();
+    assert.equal(report.mock.callCount(), run);
+    assert.equal(report.mock.calls.at(-1).arguments[0], 'topic-do: timer callback failed');
+    assert.ok(report.mock.calls.at(-1).arguments[1] instanceof TypeError);
+    assert.equal(client.publish.mock.callCount(), run);
+    assert.deepEqual(calls(client.publish).at(-1), ['good', 'off']);
+  }
 });
 
 test('special topic names are subscribed, dispatched, and cached safely', t => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { cache, matchTopic, singleTimer, triggerTimer } from '../src/util.js';
 
 for (const [filter, topic, expected] of [
@@ -146,6 +147,83 @@ for (const [name, filter, topic, expected] of [
     assert.equal(matchTopic(filter, topic), expected);
   });
 }
+
+for (const [name, fail] of [
+  ['throw', error => { throw error; }],
+  ['rejected promise', error => Promise.reject(error)],
+  ['rejected thenable', error => ({ then: (_, reject) => reject(error) })],
+  ['throwing then getter', error => ({ get then() { throw error; } })]
+]) {
+  test(`singleTimer reports a callback ${name} and remains reusable`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const error = new Error('delayed callback failed');
+    const report = t.mock.method(console, 'error', () => {});
+    const timer = singleTimer(100);
+    const otherTimer = singleTimer(100);
+    const healthy = t.mock.fn();
+    for (let run = 1; run <= 2; run++) {
+      timer(() => fail(error));
+      otherTimer(healthy);
+      assert.doesNotThrow(() => t.mock.timers.tick(100));
+      // Allow promise callbacks and Node's unhandled-rejection checks to run.
+      await setImmediate();
+      assert.equal(healthy.mock.callCount(), run);
+      assert.equal(report.mock.callCount(), run);
+      assert.deepEqual(report.mock.calls.at(-1).arguments, ['topic-do: timer callback failed', error]);
+    }
+    timer(healthy);
+    t.mock.timers.tick(100);
+    assert.equal(healthy.mock.callCount(), 3);
+  });
+}
+
+test('singleTimer observes a resolved async callback without publishing its result', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const report = t.mock.method(console, 'error', () => {});
+  const callback = t.mock.fn(async () => ['light', 'off']);
+  assert.equal(singleTimer(100)(callback), undefined);
+  t.mock.timers.tick(100);
+  await setImmediate();
+  assert.equal(callback.mock.callCount(), 1);
+  assert.equal(report.mock.callCount(), 0);
+});
+
+for (const asynchronous of [false, true]) {
+  test(`triggerTimer reports ${asynchronous ? 'rejected' : 'throwing'} delayed publishers and can run again`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const error = new Error('delayed publication failed');
+    const report = t.mock.method(console, 'error', () => {});
+    const publish = t.mock.fn(asynchronous
+      ? async () => { throw error; }
+      : () => { throw error; });
+    const handler = triggerTimer(null, ['light'], 'on', 'off', 100);
+    for (let run = 1; run <= 2; run++) {
+      assert.deepEqual(handler('motion', {}, cache(), publish), [['light', 'on']]);
+      assert.doesNotThrow(() => t.mock.timers.tick(100));
+      await setImmediate();
+      assert.equal(publish.mock.callCount(), run);
+      assert.deepEqual(publish.mock.calls.at(-1).arguments, [[['light', 'off']]]);
+      assert.equal(report.mock.callCount(), run);
+      assert.deepEqual(report.mock.calls.at(-1).arguments, ['topic-do: timer callback failed', error]);
+    }
+  });
+}
+
+test('cancelled timer callbacks are not invoked or reported', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const report = t.mock.method(console, 'error', () => {});
+  const timer = singleTimer(100);
+  const failing = t.mock.fn(() => { throw new Error('cancelled callback ran'); });
+  const healthy = t.mock.fn();
+  timer(failing);
+  t.mock.timers.tick(50);
+  timer(healthy);
+  t.mock.timers.tick(100);
+  await setImmediate();
+  assert.equal(failing.mock.callCount(), 0);
+  assert.equal(healthy.mock.callCount(), 1);
+  assert.equal(report.mock.callCount(), 0);
+});
 
 test('cache supports special keys without inherited values', () => {
   const memory = cache();

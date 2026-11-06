@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Report synchronous `singleTimer()` callback errors and rejected returned
+  promises/thenables to `console.error`, without interrupting other timers or
+  preventing subsequent triggers. Callback return values are not auto-published.
+- Return `triggerTimer()`'s delayed publication result to that error boundary so
+  throwing and rejecting publishers are both observed. Debouncing and delay
+  validation are unchanged; failures are not automatically retried.
+
 ## 1.0.0
 
 The first stable rule-object API, consolidating the former `feature/new-syntax`

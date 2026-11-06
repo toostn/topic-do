@@ -16,8 +16,9 @@ library, not a standalone service or device integration.
 3. Create an ES module (`automation.mjs`, or use `"type": "module"` in your project).
 4. Configure your broker and add rules.
 
-This README describes **1.0.0**. Upgrading from 0.x? Read
-[Migration from 0.x](#migration-from-0x) and [CHANGELOG.md](CHANGELOG.md).
+The latest release is **1.0.0**; changes pending release are listed under
+**Unreleased** in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.x? Read
+[Migration from 0.x](#migration-from-0x).
 
 ```js
 import { broker } from 'topic-do';
@@ -121,7 +122,8 @@ Buffers containing only the view's bytes. Objects, arrays, finite numbers, boole
 and `null` are JSON-encoded. Unsupported values (such as `undefined`, functions,
 symbols, BigInts, non-finite numbers, and circular objects) raise an error rather
 than being sent to mqtt.js. Errors in handler-returned publications are logged by
-the rule wrapper; direct `publish()` callers must handle thrown errors themselves.
+the rule wrapper. Outside a guarded rule or timer-helper callback, direct
+`publish()` callers must handle thrown errors themselves.
 The API does not expose per-message QoS/retain options or delivery acknowledgments.
 
 The last handler argument is a **publishing function**, not a broker or mqtt.js
@@ -229,8 +231,19 @@ const motionLight = {
 
 `topics` must be an array. A `null` filter accepts every trigger; otherwise it must
 return exactly `true`. A `null` or `undefined` on/off message omits that action.
-Rejected triggers do not reset the timer. Timer callbacks and external event
-callbacks run outside the rule error wrapper; handle errors inside those callbacks.
+Rejected triggers do not reset the timer.
+
+`singleTimer()` reports synchronous callback errors and rejections of returned
+promises/thenables to `console.error`. `triggerTimer()` uses the same boundary for
+its delayed off-publication, including failures thrown by `publish()`. Failures do
+not prevent other timers from firing or the helper from being triggered again;
+failed actions are not automatically retried.
+
+Return asynchronous work from a timer callback so its rejection can be observed.
+A callback's return value is not automatically published. Debouncing replaces only
+pending callbacks; it does not cancel asynchronous work that has already started.
+External event callbacks, raw `setTimeout` callbacks, and detached promises remain
+outside these boundaries and must handle their own errors.
 
 ## Migration from 0.x
 

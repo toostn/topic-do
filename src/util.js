@@ -50,7 +50,15 @@ export const singleTimer = (delay) => {
       clearTimeout(timeout);
     }
 
-    timeout = setTimeout(() => { callback(); }, delay);
+    timeout = setTimeout(() => {
+      timeout = null;
+      const reportError = error => console.error('topic-do: timer callback failed', error);
+      try {
+        Promise.resolve(callback()).catch(reportError);
+      } catch (error) {
+        reportError(error);
+      }
+    }, delay);
   }
 };
 
@@ -64,7 +72,7 @@ export const triggerTimer = (filter, topics, messageOn, messageOff, delay) => {
     if (filter == null || filter(topic, message, cache) === true) {
       if (messageOff != null) {
         timer(() => {
-          publish(topics.map(t=> [t, messageOff]));
+          return publish(topics.map(t=> [t, messageOff]));
         });
       }
 
