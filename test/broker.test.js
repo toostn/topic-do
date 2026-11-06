@@ -445,6 +445,19 @@ test('close deadline force-closes a stuck MQTT connection', async t => {
   assert.deepEqual(calls(client.end).map(args => args[0]), [false, true]);
 });
 
+test('expected request cancellation during close is not reported as a rule failure', async t => {
+  const report = t.mock.method(console, 'error', () => {});
+  let cancel;
+  const request = new Promise((resolve, reject) => { cancel = reject; });
+  const app = connected(t, broker('mqtt://test.invalid').add({
+    topic: 'input', do: () => request,
+    close: () => cancel(new DOMException('Shutting down', 'AbortError'))
+  }));
+  receive('input', '{}');
+  await app.close();
+  assert.equal(report.mock.callCount(), 0);
+});
+
 test('close also cancels a not-yet-started connection tick', async t => {
   const app = broker('mqtt://test.invalid').add({ topic: 'input', do() {} });
   await app.close();

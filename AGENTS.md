@@ -31,6 +31,7 @@ configuration languages, and large dependencies without a concrete need.
   ignore late publications, invoke unique rule/handler close hooks, drain returned
   work, and end MQTT. Cleanup/deadline failures reject and force-end the client.
   Timer helpers expose `.close()`; `triggerTimer` hooks are registered by `.add()`.
+  Expected AbortError handler rejections during close are not logged as failures.
   The application owns process signals, cache persistence and process exit.
 - Topic handlers receive `(topic, payload, cache, publish)`; scheduled handlers
   receive `(cache, publish)`. `publish` is a function, not a client/broker object.

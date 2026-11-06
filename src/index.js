@@ -110,6 +110,7 @@ export const broker = (url, mqttOptions, options = {}) => {
   };
 
   const _reportRuleError = (error) => {
+    if (_closing && error?.name === 'AbortError') return;
     console.error('topic-do: rule execution failed', error);
   };
 

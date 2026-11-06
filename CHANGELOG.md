@@ -13,6 +13,8 @@
 
 ### Fixes
 
+- Do not log expected `AbortError` handler rejections as rule failures during
+  shutdown. Other errors and cancellation outside shutdown are still reported.
 - Report synchronous `singleTimer()` callback errors and rejected returned
   promises/thenables to `console.error`, without interrupting other timers or
   preventing subsequent triggers. Callback return values are not auto-published.

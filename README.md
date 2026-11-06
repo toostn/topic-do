@@ -147,7 +147,8 @@ or device-acknowledgment guarantee.
 
 Repeated calls return the same promise. Adding rules after close throws. If a
 cleanup fails, close rejects with an `AggregateError`; if the deadline expires it
-force-ends MQTT and rejects. The application owns logging, exit policy, and final
+force-ends MQTT and rejects. Expected `AbortError` handler rejections during shutdown
+are not logged as rule failures; other errors are still reported. The application owns logging, exit policy, and final
 cache persistence. Hooks should cancel external I/O and timers; detached work
 cannot be discovered or cancelled automatically. The library installs no process
 signal handlers and never calls `process.exit()`.
