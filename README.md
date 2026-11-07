@@ -16,9 +16,8 @@ library, not a standalone service or device integration.
 3. Create an ES module (`automation.mjs`, or use `"type": "module"` in your project).
 4. Configure your broker and add rules.
 
-The latest release is **1.0.0**; changes pending release are listed under
-**Unreleased** in [CHANGELOG.md](CHANGELOG.md). Upgrading from 0.x? Read
-[Migration from 0.x](#migration-from-0x).
+This README describes **1.1.0**. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Upgrading from 0.x? Read [Migration from 0.x](#migration-from-0x).
 
 ```js
 import { broker } from 'topic-do';

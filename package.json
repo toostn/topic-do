@@ -9,7 +9,7 @@
     "mqtt": "^5.1.4"
   },
   "description": "High code automation system for mqtt",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "src/index.js",
   "files": [
     "src/",
